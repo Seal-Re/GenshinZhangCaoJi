@@ -5,9 +5,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LLMConfig(BaseModel):
+    provider: str = "claude"          # "claude" | "openai"
     default: str = "claude-sonnet-4-6"
     vision_fast: str = "gemini-2.0-flash"
     vision_fallback: str = "gpt-4o"
+
+
+class OpenAIConfig(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    base_url: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    model_id: str = "gpt-4o"
 
 
 class GameConfig(BaseModel):
@@ -30,6 +39,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     llm: LLMConfig = LLMConfig()
+    openai: OpenAIConfig = OpenAIConfig()
     game: GameConfig = GameConfig()
     genshin: GenshinConfig = GenshinConfig()
 

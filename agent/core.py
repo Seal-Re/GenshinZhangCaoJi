@@ -12,7 +12,7 @@ from skills.explore_map import ExploreMapSkill
 from vision.capture import ScreenCapture
 from vision.client import VisionClient
 from vision.executor import ActionExecutor
-from vision.providers import ClaudeVLMProvider
+from vision.providers import ClaudeVLMProvider, OpenAIVLMProvider
 
 
 class AgentState(TypedDict):
@@ -23,16 +23,28 @@ class AgentState(TypedDict):
     reply_messages: list[AgentMessage]
 
 
+def _build_vlm_provider(cfg):
+    """Select VLM provider based on config."""
+    if cfg.llm.provider == "openai":
+        return OpenAIVLMProvider(
+            api_key=cfg.openai.api_key,
+            model=cfg.openai.model_id,
+            base_url=cfg.openai.base_url or None,
+        )
+    # Default: Claude
+    return ClaudeVLMProvider(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        model=cfg.llm.default,
+    )
+
+
 def build_agent() -> tuple[object, SkillRouter]:
     cfg = load_config()
 
     # Wire up infrastructure
     capture = ScreenCapture()
     executor = ActionExecutor()
-    vlm = ClaudeVLMProvider(
-        api_key=os.environ["ANTHROPIC_API_KEY"],
-        model=cfg.llm.default,
-    )
+    vlm = _build_vlm_provider(cfg)
     vision = VisionClient(vlm_provider=vlm)
     data = DataClient()
 
