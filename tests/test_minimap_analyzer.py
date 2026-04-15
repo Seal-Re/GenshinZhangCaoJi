@@ -50,3 +50,44 @@ def test_get_player_position_returns_center():
     assert isinstance(pos, MapPoint)
     assert 40 <= pos.x <= 55
     assert 40 <= pos.y <= 55
+
+
+import asyncio
+from unittest.mock import MagicMock, AsyncMock
+from scene.navigation import NavigationModule
+from skills._base import SkillContext
+
+
+def make_mock_ctx(minimap_img=None):
+    if minimap_img is None:
+        minimap_img = make_minimap_with_gray_patch()
+    ctx = MagicMock()
+    ctx.capture.capture_minimap.return_value = minimap_img
+    ctx.executor = AsyncMock()
+    ctx.reply = AsyncMock()
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_navigation_has_unexplored_true():
+    ctx = make_mock_ctx(make_minimap_with_gray_patch())
+    nav = NavigationModule(ctx, minimap_region=(1820, 30, 95, 95))
+    assert nav.has_unexplored() is True
+
+
+@pytest.mark.asyncio
+async def test_navigation_has_unexplored_false():
+    ctx = make_mock_ctx(make_all_explored_minimap())
+    nav = NavigationModule(ctx, minimap_region=(1820, 30, 95, 95))
+    assert nav.has_unexplored() is False
+
+
+@pytest.mark.asyncio
+async def test_move_toward_calls_hold_key():
+    ctx = make_mock_ctx()
+    nav = NavigationModule(ctx, minimap_region=(1820, 30, 95, 95))
+    # Target to the right of center (cx=47) → should press 'd'
+    await nav.move_toward(MapPoint(x=80, y=47))
+    ctx.executor.hold_key.assert_called_once()
+    key_called = ctx.executor.hold_key.call_args[0][0]
+    assert key_called == "d"
