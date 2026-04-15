@@ -32,7 +32,7 @@ class VisionClient:
         if template.ndim == 3 and template.shape[2] == 4:
             template = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
 
-        result = cv2.matchTemplate(frame, template, cv2.TM_CCORR_NORMED)
+        result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
         if max_val >= threshold:

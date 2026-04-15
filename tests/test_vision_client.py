@@ -7,9 +7,14 @@ from vision.providers import VLMProvider
 
 
 def make_template_in_frame():
-    """Create a frame with a known template embedded at (50, 80)."""
+    """Create a frame with a known template embedded at (50, 80).
+
+    Uses a non-uniform (random-noise) template so that TM_CCOEFF_NORMED has
+    well-defined variance and returns a unique maximum at the embedded location.
+    """
+    rng = np.random.default_rng(7)
+    template = rng.integers(100, 200, (20, 30, 3), dtype=np.uint8)
     frame = np.zeros((200, 300, 3), dtype=np.uint8)
-    template = np.full((20, 30, 3), 200, dtype=np.uint8)
     frame[80:100, 50:80] = template
     return frame, template
 
@@ -26,9 +31,12 @@ def test_fast_detect_finds_template():
 
 def test_fast_detect_returns_not_found():
     client = VisionClient(vlm_provider=MagicMock())
-    frame = np.zeros((200, 300, 3), dtype=np.uint8)
-    template = np.full((20, 30, 3), 200, dtype=np.uint8)
-    result = client.fast_detect(frame, template, threshold=0.99)
+    rng = np.random.default_rng(42)
+    frame = rng.integers(30, 180, (200, 300, 3), dtype=np.uint8)
+    # Non-uniform template with pixel values (220-255) absent from frame (30-180),
+    # so TM_CCOEFF_NORMED has defined variance and correctly scores < 0.8
+    template = rng.integers(220, 255, (20, 30, 3), dtype=np.uint8)
+    result = client.fast_detect(frame, template)  # default threshold=0.8
     assert result.found is False
     assert result.location is None
 
