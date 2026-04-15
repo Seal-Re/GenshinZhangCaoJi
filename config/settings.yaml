@@ -1,0 +1,16 @@
+# config/settings.yaml
+# Human-readable reference. Actual config via environment variables or .env
+llm:
+  default: claude-sonnet-4-6
+  vision_fast: gemini-2.0-flash
+  vision_fallback: gpt-4o
+
+game:
+  window_title: "原神"
+  screenshot_interval_ms: 500
+  # Adjust minimap_region for your resolution (left, top, width, height)
+  minimap_region: [1820, 30, 95, 95]  # default: 1920x1080
+
+genshin:
+  uid: ""
+  cookie_path: .secrets/cookie.txt
