@@ -1,11 +1,35 @@
+# Secrets / env
 .env
+.secrets/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 .venv/
 venv/
+env/
 dist/
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
 *.log
-.secrets/
+
+# Screenshots / captured frames
+screenshots/
+frames/
+*.png
+*.jpg
+!docs/**/*.png
+!docs/**/*.jpg
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime data
+data/*.db
+data/*.sqlite
