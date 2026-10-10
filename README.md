@@ -1,163 +1,88 @@
-# GenshinZhangCaoJi · LangGraph VLM Genshin Agent
+# GenshinZhangCaoJi
 
-> **An autonomous Genshin Impact agent powered by a LangGraph state machine, multi-provider VLM vision, and injectable skill architecture.**
->
-> 基于 LangGraph 状态机驱动、多模型 VLM 视觉感知的原神自动化 Agent，覆盖探图、战斗、结算全生命周期，测试注入零硬编码。
+A Phase 1 prototype of a Genshin Impact automation agent: screenshot capture, OpenCV heuristics and a vision LLM drive keyboard/mouse actions through a small LangGraph state machine.
 
-[English](#english) · [中文](#中文)
+Status: prototype / Phase 1. Only one skill is registered, and the account-data client is a stub. Trigger words and console output are in Chinese. Windows only (the game is; `pyautogui` and `mss` target a local desktop).
 
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python)
-![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-1F6FEB)
-![LangChain](https://img.shields.io/badge/LangChain-Anthropic-412991?logo=anthropic)
-![Vision](https://img.shields.io/badge/VLM-Claude%20%7C%20Gemini%20%7C%20GPT--4o-FF6B6B)
-![OpenCV](https://img.shields.io/badge/CV-OpenCV-5C3EE8?logo=opencv)
-![License](https://img.shields.io/badge/License-MIT-blue)
+## What is implemented
 
----
+**Agent graph.** `agent/core.py` builds a `StateGraph(AgentState)` with two nodes — `route` and `execute` — wired `route -> execute -> END`. `route` asks `SkillRouter` to match the user input against skill trigger words; `execute` builds a `SkillContext` (capture, vision, executor, data, reply callback) and awaits the skill. This is a single pass, not a perceive/decide/act loop.
 
-<a id="english"></a>
+**Skill router.** `agent/router.py` matches by skill name or by substring of any trigger word. One skill is registered in `build_agent()`: `ExploreMapSkill`, whose triggers are `开图`, `探索地图`, `开蒙德`, `开璃月`, `开稻妻` and `explore map`. Unmatched input returns a "no skill found" message.
 
-## TL;DR
+**Explore loop.** `skills/explore_map.py` runs up to 200 steps: read the minimap region, ask the navigation module for the nearest unexplored point, hold the corresponding WASD key for 0.5 s, capture a full frame and — if the combat module sees enemies — run the rotation and then check the settlement screen. Progress is reported every 20 steps.
 
-GenshinZhangCaoJi is a research-grade autonomous game agent for Genshin Impact. A LangGraph `StateGraph` drives the control loop: every tick, a VLM (Claude/Gemini/GPT-4o) interprets the screen, a `SkillRouter` dispatches scene-specific skill modules (exploration, combat, settlement), and `ActionExecutor` translates decisions into keyboard/mouse events — no hardcoded macro sequences.
+**Scene modules** (`scene/`):
 
-## Architecture
+- `navigation.py` — `MinimapAnalyzer` thresholds the minimap in HSV for low-saturation grey pixels, takes contour centroids above 15 px as unexplored areas, and treats the minimap centre as the player. `NavigationModule.move_toward` compares the target offset against the centre and picks one of W/A/S/D.
+- `combat.py` — `detect_enemy` counts red pixels (two HSV hue bands, 300-pixel threshold) to decide whether an enemy HP bar is on screen. `clear_enemies` presses the fixed rotation `1`, `E`, `Q` with per-key delays until the red-pixel test fails or 30 iterations elapse, then asks the VLM whether a reward screen is visible.
+- `settlement.py` — asks the VLM a single yes/no question about a settlement/reward screen and presses `F` if it answers yes.
 
-```mermaid
-flowchart LR
-    CLI["main.py\nCLI entry"] --> Core["agent/core.py\nbuild_agent()"]
+**Vision** (`vision/`): `capture.py` wraps `mss` for full-screen or region grabs; `client.py` exposes `fast_detect` (OpenCV `matchTemplate`, threshold 0.8) and `understand` (PNG-encodes the frame and asks the provider); `executor.py` wraps `pyautogui` clicks, key presses, held keys, moves and scrolls, with `FAILSAFE` on.
 
-    subgraph LangGraph["LangGraph StateGraph"]
-        Perceive["perceive\nVisionClient → VLM"]
-        Decide["decide\nSkillRouter → scene"]
-        Act["act\nActionExecutor"]
-        Perceive --> Decide --> Act --> Perceive
-    end
+**Providers.** `vision/providers.py` has two implementations of the `VLMProvider` protocol: `ClaudeVLMProvider` (anthropic SDK, base64 image block) and `OpenAIVLMProvider` (any OpenAI-compatible `chat/completions` endpoint, `image_url` data URI). `_build_vlm_provider` picks one at startup from `llm.provider` (`claude` or `openai`) and never switches afterwards. There is no Gemini provider and no timeout/quota fallback between providers.
 
-    Core --> LangGraph
+**Config.** `config/loader.py` is a pydantic-settings `Settings` model reading `.env` with `env_nested_delimiter="__"`. `config/settings.yaml` is a human-readable reference only — the loader never reads it. Defaults: minimap region `(1820, 30, 95, 95)`, window title `原神`, 500 ms screenshot interval.
 
-    subgraph Vision["vision/"]
-        SC["ScreenCapture\nmss + OpenCV"]
-        VC["VisionClient\nClaude / Gemini / GPT-4o"]
-        AE["ActionExecutor\npyautogui"]
-    end
+**Tests.** 29 tests in 8 modules (`test_combat_module`, `test_config`, `test_explore_map_skill`, `test_minimap_analyzer`, `test_skill_base`, `test_vision_capture`, `test_vision_client`, `test_vision_executor`). Capture, vision and executor are constructor-injected, so the suite runs without a game or a display.
 
-    subgraph Skills["skills/ + scenes/"]
-        EM["ExploreMapSkill"]
-        Combat["combat/\nstate machine"]
-        Nav["navigation/\nA-star + minimap"]
-        Settle["settlement/\nreward loop"]
-    end
-
-    Decide --> Skills
-    Perceive --> Vision
-    Act --> AE
-```
-
-## Quickstart
+## Getting started
 
 ```bash
-# 1. Install
-pip install -e .
+python -m venv .venv && . .venv/bin/activate
 
-# 2. Environment
+# pyproject.toml declares the dependencies, but the hatchling build config has no
+# wheel target, so `pip install -e .` cannot select files. Install them directly:
+pip install anthropic openai langchain-anthropic langgraph opencv-python pyautogui mss \
+            pydantic pydantic-settings numpy aiofiles pytest pytest-asyncio pytest-mock
+
 cp .env.example .env
-# Fill: ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY (at least one)
+# ANTHROPIC_API_KEY is required by main.py regardless of which provider is selected.
+# The loader uses nested env names, so the OpenAI path needs OPENAI__API_KEY,
+# OPENAI__MODEL_ID and OPENAI__BASE_URL (the flat names in .env.example are not read).
 
-# 3. Run (with Genshin Impact open on 1920×1080)
-python main.py '开图'        # exploration mode
-python main.py '战斗'        # combat mode
-python main.py --help
+python main.py --list-skills     # prints registered skills and trigger words
+python main.py '开图'            # run exploration (with the game window open)
 ```
 
-### Minimum .env
+The minimap bounds default to 1920x1080; on another resolution adjust `minimap_region` in the environment or in `config/settings.yaml` for reference.
 
-```env
-ANTHROPIC_API_KEY=sk-ant-...   # primary LLM (claude-sonnet-4-6)
-GOOGLE_API_KEY=...             # vision-fast fallback (gemini)
-# OPENAI_API_KEY=...           # optional GPT-4o fallback
-```
-
-## Technical Highlights
-
-<details>
-<summary><b>🗺️ LangGraph state machine — structured control loop</b></summary>
-
-- **S**: Genshin gameplay requires sequential multi-phase decisions (perceive → decide → act) with conditional branching; a flat script collapses under scene variety.
-- **A**: `build_agent()` in `agent/core.py` compiles a `StateGraph` with three nodes — `perceive`, `decide`, `act` — and conditional edges routing back on loop or forward on scene transition. State is a typed `AgentState` Pydantic model; no mutable globals.
-- **R**: Adding a new scene module (e.g. fishing, domains) only requires a new `SkillBase` subclass registered in `SkillRouter` — the state machine wiring is unchanged.
-</details>
-
-<details>
-<summary><b>👁️ VLM-driven game understanding with fast-path CV</b></summary>
-
-- **S**: Calling a VLM on every frame is too slow (3–8 s/call) for responsive game control; but pure template matching breaks on dynamic scenes.
-- **A**: `VisionClient` uses a two-tier approach: `fast_detect()` with OpenCV template matching and HSV masking runs first to handle known states (minimap icons, HP bars, item prompts). Only on ambiguous frames does it escalate to a full VLM call. `ScreenCapture` (mss) grabs only the configured `minimap_region` for the fast path.
-- **R**: Fast-path handles ~80% of frames locally; VLM calls are reserved for scene transitions and unrecognized states, cutting API cost by 4–5×.
-</details>
-
-<details>
-<summary><b>🔌 Multi-provider VLM config with transparent fallback</b></summary>
-
-- **S**: No single VLM provider has ideal speed + capability for all subtasks; hard-coding one model blocks experimentation.
-- **A**: `config.py` exposes `LLM_MODEL` (default `claude-sonnet-4-6`), `VISION_MODEL_FAST` (Gemini), and `VISION_MODEL_FALLBACK` (GPT-4o). `VisionClient` cycles providers on timeout or quota error without caller code changes. Swap any provider by changing one env var.
-- **R**: Runs on Anthropic-only, Gemini-only, or mixed configs — CI tests stub all providers.
-</details>
-
-<details>
-<summary><b>🧪 Injectable test architecture — zero hardcoded paths</b></summary>
-
-- **S**: Game agents are notoriously untestable because they depend on a live game window. Patching screen capture globally breaks parallel test runs.
-- **A**: `ScreenCapture`, `VisionClient`, and `ActionExecutor` are injected as constructor arguments throughout the stack. Test suites pass mock implementations (`MockVisionClient`, fixture screenshots) without monkeypatching. `tests/` covers combat module, minimap analyzer, skill base contract, and vision capture/client/executor independently.
-- **R**: Full test suite runs in CI with no Genshin Impact installed, no display required.
-</details>
-
-## Roadmap
-
-- [x] LangGraph StateGraph control loop
-- [x] SkillRouter + ExploreMapSkill
-- [x] Multi-provider VisionClient (Claude / Gemini / GPT-4o)
-- [x] Combat state machine + navigation module
-- [x] Injectable test architecture, pytest suite
-- [ ] Daily commission auto-completion skill
-- [ ] Domain / spiral abyss skill module
-- [ ] Kaleidoscope reward loop (fishing, parametric transformer)
-- [ ] Web dashboard for session replay and frame annotation
-
-## Repo Layout
+## Project layout
 
 ```
 GenshinZhangCaoJi/
-├── main.py              CLI entry point
+├── main.py                  # CLI entry, asyncio.run(run_cli(...))
 ├── agent/
-│   ├── core.py          build_agent() — LangGraph StateGraph
-│   └── router.py        SkillRouter — scene dispatch
-├── skills/              SkillBase + ExploreMapSkill
-├── scenes/
-│   ├── combat/          combat state machine
-│   ├── navigation/      A* + minimap pathfinding
-│   └── settlement/      reward collection loop
+│   ├── core.py              # build_agent(): StateGraph + wiring
+│   └── router.py            # SkillRouter
+├── skills/
+│   ├── _base.py             # BaseSkill, SkillContext, SkillResult, AgentMessage
+│   └── explore_map.py       # ExploreMapSkill (the only registered skill)
+├── scene/
+│   ├── _base.py
+│   ├── navigation.py        # MinimapAnalyzer + NavigationModule
+│   ├── combat.py            # CombatModule
+│   └── settlement.py        # SettlementModule
 ├── vision/
-│   ├── screen_capture.py  mss capture + OpenCV fast_detect
-│   ├── vision_client.py   multi-provider VLM wrapper
-│   └── action_executor.py pyautogui action dispatch
-├── config.py            env-based config (models, minimap_region)
-└── tests/               pytest suite (injectable mocks, no live game)
+│   ├── capture.py           # ScreenCapture (mss)
+│   ├── client.py            # VisionClient: fast_detect + understand
+│   ├── executor.py          # ActionExecutor (pyautogui)
+│   └── providers.py         # ClaudeVLMProvider, OpenAIVLMProvider
+├── config/
+│   ├── loader.py            # pydantic-settings
+│   └── settings.yaml        # reference values, not loaded
+├── data/client.py           # DataClient — stub
+└── tests/                   # 8 modules, injected mocks
 ```
 
----
+## Limitations
 
-<a id="中文"></a>
-
-## 中文速读
-
-- **是什么**：原神自动化 Agent，LangGraph `StateGraph` 驱动「感知→决策→执行」循环，Claude/Gemini/GPT-4o 多模型 VLM 识别游戏画面，SkillRouter 分发场景技能（探图/战斗/结算）。
-- **核心技术**：
-  - **两级感知**：OpenCV `fast_detect` 处理已知状态（~80% 帧），未识别场景才调 VLM，API 成本降 4–5×；
-  - **可注入测试**：`ScreenCapture`、`VisionClient`、`ActionExecutor` 均构造注入，CI 无需安装游戏即可运行全套测试；
-  - **多模型透明切换**：超时/限流自动降级，改一个 env var 即切换提供商。
-- **快速运行**：`pip install -e . && python main.py '开图'`（需 1920×1080 游戏窗口）。
+- Phase 1 only. `data/client.py` returns empty `PlayerStats` and `{}`; the planned account and wiki integrations are not written.
+- The OpenCV thresholds (grey unexplored areas, red HP bars, template match at 0.8) are uncalibrated outside the 1920x1080 default, and the combat rotation is a hardcoded `1 / E / Q` sequence.
+- One skill. Daily commissions, domains, abyss and the video-route learning described in `docs/superpowers/specs/` are not implemented.
+- The design spec lists Claude, GPT-4o and Gemini with per-scene routing; only Claude and OpenAI-compatible providers exist, with no fallback.
+- `fast_detect` is exercised by tests but is not called anywhere in the gameplay path.
 
 ## License
 
-MIT © [Seal-Re](https://github.com/Seal-Re)
+MIT. See `LICENSE`.
